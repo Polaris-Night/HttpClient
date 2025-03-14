@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+option(BUILD_WITH_SSL "Build with SSL support" ON)
+
 add_subdirectory(src)
 add_subdirectory(third_party)
 add_subdirectory(example)

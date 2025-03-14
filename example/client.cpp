@@ -4,15 +4,16 @@
 void TestGet() {
     HttpClient  client;
     HttpRequest request;
-    request.SetFullUrl( "http://127.0.0.1:3001/get?a=a&b=b&c=c" )
-        .SetMethod( HttpRequest::GET )
-        .SetHeader( "Connection", "close" );
+    // request.SetFullUrl( "http://www.baidu.com:80/" ).SetMethod( HttpRequest::GET );
+    request.SetFullUrl( "https://www.baidu.com:443/" ).SetMethod( HttpRequest::GET );
     std::cout << "=======> GET request message:\n" << request.ToString() << std::endl;
-    auto              ptr      = client.Send( request );
+    SSLConfig         ssl_config;
+    auto              ptr      = client.Send( request, ssl_config );
     HttpResponse::Ptr response = std::move( ptr );
     response->WaitForDone();
     std::cout << "=======> GET request success = " << response->IsSuccess() << std::endl;
     std::cout << "=======> GET response message:\n" << response->ToString() << std::endl;
+    std::cout << "=======> GET error: " << response->ErrorString() << std::endl;
 }
 
 void TestPost() {
@@ -20,7 +21,7 @@ void TestPost() {
     HttpRequest request;
     request.SetFullUrl( "http://127.0.0.1:3001/post" )
         .SetMethod( HttpRequest::POST )
-        .SetHeader( "Connection", "close" )
+        .SetHeader( "Connection", "keep-alive" )
         .SetBody( "a=a&b=b&c=c" );
     std::cout << "=======> POST request message:\n" << request.ToString() << std::endl;
     auto              ptr      = client.Send( request );
@@ -33,6 +34,6 @@ void TestPost() {
 int main() {
     TestGet();
     std::cout << "============================" << std::endl;
-    TestPost();
+    // TestPost();
     return 0;
 }
