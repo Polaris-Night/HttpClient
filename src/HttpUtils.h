@@ -7,10 +7,14 @@
 
 struct evhttp_uri;
 
-class UrlParser {
+class UrlObject final {
 public:
-    UrlParser( const std::string &url );
-    ~UrlParser();
+    UrlObject( const std::string &url );
+    UrlObject( UrlObject &&other );
+    UrlObject &operator=( UrlObject &&other );
+    UrlObject( const UrlObject & )            = delete;
+    UrlObject &operator=( const UrlObject & ) = delete;
+    ~UrlObject();
 
     std::optional<std::string> Host() const;
 

@@ -2,15 +2,24 @@
 #include <event2/http.h>
 #include <string_view>
 
-UrlParser::UrlParser( const std::string &url ) : uri_( evhttp_uri_parse( url.c_str() ) ) {}
+UrlObject::UrlObject( const std::string &url ) : uri_( evhttp_uri_parse( url.c_str() ) ) {}
 
-UrlParser::~UrlParser() {
+UrlObject::UrlObject( UrlObject &&other ) {
+    *this = std::move( other );
+}
+
+UrlObject &UrlObject::operator=( UrlObject &&other ) {
+    uri_ = std::exchange( other.uri_, nullptr );
+    return *this;
+}
+
+UrlObject::~UrlObject() {
     if ( uri_ != nullptr ) {
         evhttp_uri_free( uri_ );
     }
 }
 
-std::optional<std::string> UrlParser::Host() const {
+std::optional<std::string> UrlObject::Host() const {
     if ( uri_ == nullptr ) {
         return std::nullopt;
     }
@@ -21,7 +30,7 @@ std::optional<std::string> UrlParser::Host() const {
     return std::string( host );
 }
 
-std::optional<uint16_t> UrlParser::Port() const {
+std::optional<uint16_t> UrlObject::Port() const {
     if ( uri_ == nullptr ) {
         return std::nullopt;
     }
@@ -32,7 +41,7 @@ std::optional<uint16_t> UrlParser::Port() const {
     return static_cast<uint16_t>( port );
 }
 
-std::optional<std::string> UrlParser::Path() const {
+std::optional<std::string> UrlObject::Path() const {
     if ( uri_ == nullptr ) {
         return std::nullopt;
     }
@@ -43,7 +52,7 @@ std::optional<std::string> UrlParser::Path() const {
     return std::string( path );
 }
 
-std::optional<std::string> UrlParser::Scheme() const {
+std::optional<std::string> UrlObject::Scheme() const {
     if ( uri_ == nullptr ) {
         return std::nullopt;
     }
@@ -54,7 +63,7 @@ std::optional<std::string> UrlParser::Scheme() const {
     return std::string( scheme );
 }
 
-std::optional<std::string> UrlParser::Query() const {
+std::optional<std::string> UrlObject::Query() const {
     if ( uri_ == nullptr ) {
         return std::nullopt;
     }

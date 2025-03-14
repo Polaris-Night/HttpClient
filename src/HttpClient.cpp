@@ -1,9 +1,14 @@
 #include "HttpClient.h"
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
+#ifdef BUILD_WITH_SSL
+    #include <event2/bufferevent_ssl.h>
+#endif
 #include <event2/event.h>
 #include <event2/thread.h>
+#include <event2/util.h>
 #include <evhttp.h>
+#include <string.h>
 #include <iostream>
 #include <thread>
 
@@ -35,28 +40,42 @@ evhttp_cmd_type ToEvType( HttpRequest::Method method ) {
 }  // namespace
 
 void OnRequestDone( evhttp_request *req, void *arg ) {
+    if ( arg == nullptr ) {
+        return;
+    }
     HttpResponse *resp = reinterpret_cast<HttpResponse *>( arg );
-    // HTTP版本
+    if ( req == nullptr ) {
+        resp->promise_.set_value( true );
+        return;
+    }
+    // HTTP version
     char buf[10] = {};
     std::snprintf( buf, std::size( buf ), "HTTP/%d.%d", req->major, req->minor );
     resp->http_version_ = buf;
-    // 状态
+    // status
     resp->status_code_ = evhttp_request_get_response_code( req );
     auto *code_line    = evhttp_request_get_response_code_line( req );
     if ( code_line != nullptr ) {
         resp->status_phrase_ = std::string( code_line );
     }
-    // 响应头
+    // response headers
     auto *headers = evhttp_request_get_input_headers( req );
     for ( evkeyval *header = headers->tqh_first; header != nullptr; header = header->next.tqe_next ) {
         resp->header_[header->key] = header->value;
     }
-    // 响应数据
+    // response data
     auto *buffer = evhttp_request_get_input_buffer( req );
     if ( buffer ) {
         size_t len = evbuffer_get_length( buffer );
         resp->body_.resize( len );
         evbuffer_copyout( buffer, resp->body_.data(), len );
+    }
+    // error message
+    if ( !resp->IsSuccess() ) {
+        std::string error = "[Socket error: ";
+        error += evutil_socket_error_to_string( errno );
+        error += "]; [SSL error: " + SSLConfig::SSLErrorString() + "]";
+        resp->error_ = std::move( error );
     }
     resp->promise_.set_value( true );
 }
@@ -67,7 +86,7 @@ HttpRequest &HttpRequest::SetMethod( Method method ) {
 }
 
 HttpRequest &HttpRequest::SetFullUrl( const std::string &url ) {
-    UrlParser parser( url );
+    UrlObject parser( url );
     auto      scheme = parser.Scheme();
     auto      host   = parser.Host();
     auto      port   = parser.Port();
@@ -285,6 +304,10 @@ int HttpResponse::StatusCode() const {
     return status_code_;
 }
 
+const std::string &HttpResponse::StatusPhrase() const {
+    return status_phrase_;
+}
+
 const std::string &HttpResponse::Body() const {
     return body_;
 }
@@ -300,6 +323,10 @@ std::string HttpResponse::Header( const std::string &key ) const {
 
 bool HttpResponse::IsSuccess() const {
     return status_code_ >= 200 && status_code_ < 300;
+}
+
+const std::string &HttpResponse::ErrorString() const {
+    return error_;
 }
 
 std::string HttpResponse::ToString() const {
@@ -347,12 +374,14 @@ HttpClient::~HttpClient() {
 }
 
 HttpResponse::Ptr HttpClient::Send( const HttpRequest &request ) {
-    HttpResponse::Ptr      response = std::make_unique<HttpResponse>();
+    HttpResponse::Ptr response( new HttpResponse() );
+    // connection
     raii_evhttp_connection connection(
         evhttp_connection_base_new( base_, nullptr, request.GetHost().c_str(), request.GetPort() ) );
     if ( !connection ) {
         return nullptr;
     }
+    // request
     raii_evhttp_request req( request.ToEvRequest( OnRequestDone, response.get() ) );
     if ( !req ) {
         return nullptr;
@@ -365,9 +394,62 @@ HttpResponse::Ptr HttpClient::Send( const HttpRequest &request ) {
                               request.GetUri().c_str() ) != 0 ) {
         return nullptr;
     }
+    // all success
     response->connection_ = connection.release();
     response->request_    = req.release();
     return response;
+}
+
+HttpResponse::Ptr HttpClient::Send( const HttpRequest &request, SSLConfig &ssl_config ) {
+#ifdef BUILD_WITH_SSL
+    std::cerr << request.GetHost() << " " << request.GetPort() << " " << request.GetScheme() << " " << request.GetPath()
+              << std::endl;
+
+    HttpResponse::Ptr response( new HttpResponse() );
+    // buffer
+    bufferevent *bufev = nullptr;
+    if ( request.GetScheme() != "https" ) {
+        bufev = bufferevent_socket_new( base_, -1, BEV_OPT_CLOSE_ON_FREE );
+    }
+    else {
+        auto *ssl = ssl_config.CreateSSL( request.GetHost() );
+        if ( ssl == nullptr ) {
+            return nullptr;
+        }
+        bufev = bufferevent_openssl_socket_new( base_, -1, ssl, BUFFEREVENT_SSL_CONNECTING,
+                                                BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS );
+    }
+    if ( !bufev ) {
+        return nullptr;
+    }
+    bufferevent_openssl_set_allow_dirty_shutdown( bufev, 1 );
+    // connection
+    raii_evhttp_connection connection(
+        evhttp_connection_base_bufferevent_new( base_, nullptr, bufev, request.GetHost().c_str(), request.GetPort() ) );
+    if ( !connection ) {
+        return nullptr;
+    }
+    // request
+    raii_evhttp_request req( request.ToEvRequest( OnRequestDone, response.get() ) );
+    if ( !req ) {
+        return nullptr;
+    }
+    evhttp_request_own( req.get() );
+    evhttp_request_set_error_cb( req.get(), []( evhttp_request_error error, void * ) {
+        std::cerr << "http request error: " << error << std::endl;
+    } );
+    if ( evhttp_make_request( connection.get(), req.get(), ToEvType( request.GetMethod() ),
+                              request.GetUri().c_str() ) != 0 ) {
+        return nullptr;
+    }
+    // all success
+    response->connection_ = connection.release();
+    response->request_    = req.release();
+    return response;
+#else
+    (void)ssl_config;
+    return Send( request );
+#endif
 }
 
 void HttpClient::StartEventLoop() {

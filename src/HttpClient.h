@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 
+#include "SSLConfig.h"
+
 struct evhttp_request;
 struct evhttp_connection;
 struct event_base;
@@ -26,7 +28,7 @@ public:
     HttpRequest &SetFullUrl( const std::string &url );               // e.g. http://www.example.com/path?query=value
     HttpRequest &SetScheme( const std::string &scheme );             // e.g. http, https
     HttpRequest &SetHost( const std::string &host, uint16_t port );  // e.g. host: www.example.com port: 80
-    HttpRequest &SetPath( const std::string &path );                 // e.g. /path
+    HttpRequest &SetPath( const std::string &path );                 // e.g. "/", "/path"
     HttpRequest &SetHeader( const std::string &key, const std::string &value );
     HttpRequest &SetHeader( const std::map<std::string, std::string> &header );
     HttpRequest &SetQuery( const std::string &key, const std::string &value );
@@ -38,7 +40,7 @@ public:
     const std::string                        &GetScheme() const;
     const std::string                        &GetHost() const;
     uint16_t                                  GetPort() const;
-    const std::string                        &GetPath() const;
+    const std::string                        &GetPath() const;  // Should not be empty, at least "/" on request
     const std::map<std::string, std::string> &GetHeader() const;
     std::string                               GetHeader( const std::string &key ) const;
     const std::map<std::string, std::string> &GetQuery() const;
@@ -69,7 +71,6 @@ class HttpResponse final {
 public:
     using Ptr = std::unique_ptr<HttpResponse>;
 
-    explicit HttpResponse();
     HttpResponse( HttpResponse &&other );
     HttpResponse &operator=( HttpResponse &&other );
     HttpResponse( const HttpResponse & )            = delete;
@@ -81,15 +82,18 @@ public:
     bool WaitFor( int timeout_ms );
 
     int                                       StatusCode() const;
+    const std::string                        &StatusPhrase() const;
     const std::string                        &Body() const;
     const std::map<std::string, std::string> &Header() const;
     std::string                               Header( const std::string &key ) const;
     bool                                      IsSuccess() const;
+    const std::string                        &ErrorString() const;
 
 
     std::string ToString() const;
 
 private:
+    explicit HttpResponse();
     friend class HttpClient;
 
     std::atomic_bool   is_done_ = false;
@@ -101,6 +105,7 @@ private:
     std::string                        status_phrase_;
     std::map<std::string, std::string> header_;
     std::string                        body_;
+    std::string                        error_;
 
 private:
     friend void OnRequestDone( evhttp_request *, void * );
@@ -115,7 +120,23 @@ public:
     HttpClient( event_base *base );
     ~HttpClient();
 
+    /**
+     * @brief HTTP request
+     *
+     * @param request
+     * @return HttpResponse::Ptr
+     */
     [[nodiscard]] HttpResponse::Ptr Send( const HttpRequest &request );
+
+    /**
+     * @brief HTTPS request
+     * If build without SSL support, this function is the same as Send(const HttpRequest &)
+     *
+     * @param request
+     * @param ssl_config
+     * @return HttpResponse::Ptr
+     */
+    [[nodiscard]] HttpResponse::Ptr Send( const HttpRequest &request, SSLConfig &ssl_config );
 
 private:
     void StartEventLoop();
